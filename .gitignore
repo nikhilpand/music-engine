@@ -1,0 +1,32 @@
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Kotlin
+.kotlin/
+
+# Local Android SDK and properties
+local.properties
+
+# IDE & Editors
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.fleet/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Logs & profiling
+*.log
+captures/
+*.hprof
+
+# Test reports and outputs
+**/build/reports/
+**/build/test-results/
