@@ -1,0 +1,92 @@
+{
+  "description": "SABR UMP frame test fixtures — synthetic but structurally correct UMP frames built from protocol documentation.",
+  "format_version": 1,
+  "fixtures": [
+    {
+      "name": "single_media_data",
+      "description": "A single MEDIA_DATA UMP part (typeId=21) with protobuf payload: formatId=251, offset=0, data=16 bytes",
+      "ump_type_id": 21,
+      "expected_event_type": "MediaData",
+      "expected_fields": {
+        "formatId": 251,
+        "offsetBytes": 0,
+        "dataLength": 16
+      }
+    },
+    {
+      "name": "format_init",
+      "description": "FORMAT_INIT (typeId=42) with protobuf payload: formatId=251, initSegment=32 bytes of WebM header",
+      "ump_type_id": 42,
+      "expected_event_type": "FormatInit",
+      "expected_fields": {
+        "formatId": 251,
+        "initSegmentLength": 32
+      }
+    },
+    {
+      "name": "media_end",
+      "description": "MEDIA_END (typeId=22) with protobuf payload: formatId=251",
+      "ump_type_id": 22,
+      "expected_event_type": "MediaEnd",
+      "expected_fields": {
+        "formatId": 251
+      }
+    },
+    {
+      "name": "next_request_policy",
+      "description": "NEXT_REQUEST_POLICY (typeId=43) with playback cookie, backoff, and target buffer",
+      "ump_type_id": 43,
+      "expected_event_type": "NextRequestPolicy",
+      "expected_fields": {
+        "hasCookie": true,
+        "cookieLength": 8,
+        "backoffMs": 1000,
+        "targetBufferDurationMs": 20000
+      }
+    },
+    {
+      "name": "reload_required",
+      "description": "RELOAD (typeId=44) with UTF-8 reason string",
+      "ump_type_id": 44,
+      "expected_event_type": "ReloadRequired",
+      "expected_fields": {
+        "reason": "cdn_rotation"
+      }
+    },
+    {
+      "name": "server_redirect",
+      "description": "REDIRECT (typeId=45) with new endpoint URL",
+      "ump_type_id": 45,
+      "expected_event_type": "ServerRedirect",
+      "expected_fields": {
+        "newEndpoint": "https://rr2---sn-abc123.googlevideo.com/videoplayback"
+      }
+    },
+    {
+      "name": "stream_error",
+      "description": "STREAM_ERROR (typeId=46) with protobuf code=403 and message",
+      "ump_type_id": 46,
+      "expected_event_type": "StreamError",
+      "expected_fields": {
+        "code": 403,
+        "message": "forbidden"
+      }
+    },
+    {
+      "name": "zero_length_media_header",
+      "description": "MEDIA_HEADER (typeId=20) with zero-length payload — should produce UnknownPart",
+      "ump_type_id": 20,
+      "expected_event_type": "UnknownPart",
+      "expected_fields": {
+        "typeId": 20,
+        "payloadSize": 0
+      }
+    },
+    {
+      "name": "multi_part_stream",
+      "description": "A concatenated UMP byte stream containing FORMAT_INIT → MEDIA_DATA → MEDIA_DATA → NEXT_REQUEST_POLICY → MEDIA_END, testing multi-part parsing in a single feed() call",
+      "part_count": 5,
+      "expected_event_types": ["FormatInit", "MediaData", "MediaData", "NextRequestPolicy", "MediaEnd"]
+    }
+  ]
+}
