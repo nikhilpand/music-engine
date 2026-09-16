@@ -292,4 +292,211 @@ class YouTubeMusicProviderTest {
         assertThat(results.first().title).isEqualTo("Save Your Tears")
         assertThat(results.first().durationMs).isEqualTo(215_000L) // 3*60+35 = 215 sec
     }
+
+    @Test
+    @DisplayName("MultiClientStreamResolver primary path resolves successfully and resets consecutive recovery errors")
+    fun testPrimaryStreamResolverSuccess() = runBlocking {
+        val store = com.aurora.engine.provider.ytmusic.config.ClientConfigStore(
+            """[{"clientName":"TEST_CLIENT","clientVersion":"1.0","userAgent":"UA","supportsSabr":false,"priority":100,"enabled":true}]"""
+        )
+        val ladder = com.aurora.engine.provider.ytmusic.config.ClientLadder.forStreamResolution(store)
+        val cache = com.aurora.engine.provider.ytmusic.resolver.StreamUrlCache()
+        val recoveryManager = com.aurora.engine.provider.ytmusic.recovery.RecoveryManager()
+        val resolver = com.aurora.engine.provider.ytmusic.resolver.MultiClientStreamResolver(
+            session = provider.session,
+            clientLadder = ladder,
+            urlCache = cache,
+            cipherService = com.aurora.engine.provider.ytmusic.cipher.NoOpCipherService()
+        )
+
+        val providerWithResolver = YouTubeMusicProvider(
+            session = provider.session,
+            streamResolver = resolver,
+            recoveryManager = recoveryManager
+        )
+
+        val playerJson = """
+        {
+            "playabilityStatus": { "status": "OK" },
+            "streamingData": {
+                "expiresInSeconds": "3600",
+                "adaptiveFormats": [
+                    {
+                        "itag": 251,
+                        "mimeType": "audio/webm; codecs=\"opus\"",
+                        "url": "https://resolver.googlevideo.com/audio.opus",
+                        "bitrate": 160000,
+                        "approxDurationMs": "200000"
+                    }
+                ]
+            }
+        }
+        """.trimIndent()
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody(playerJson))
+
+        val context = ResolutionContext(track = sampleTrack)
+        val result = providerWithResolver.resolvePlayback(context)
+
+        assertThat(result).isInstanceOf(ResolutionResult.Success::class.java)
+        val success = result as ResolutionResult.Success
+        assertThat(success.strategyId).isEqualTo("TEST_CLIENT")
+        val progressive = success.primarySource as PlaybackSource.Progressive
+        assertThat(progressive.url).isEqualTo("https://resolver.googlevideo.com/audio.opus")
+    }
+
+    @Test
+    @DisplayName("Falls back to StrategyRegistry when MultiClientStreamResolver fails")
+    fun testFallbackToStrategyRegistryOnResolverFailure() = runBlocking {
+        val store = com.aurora.engine.provider.ytmusic.config.ClientConfigStore(
+            """[{"clientName":"FAILING_CLIENT","clientVersion":"1.0","userAgent":"UA","supportsSabr":false,"priority":100,"enabled":true}]"""
+        )
+        val ladder = com.aurora.engine.provider.ytmusic.config.ClientLadder.forStreamResolution(store)
+        val cache = com.aurora.engine.provider.ytmusic.resolver.StreamUrlCache()
+        val resolver = com.aurora.engine.provider.ytmusic.resolver.MultiClientStreamResolver(
+            session = provider.session,
+            clientLadder = ladder,
+            urlCache = cache,
+            cipherService = com.aurora.engine.provider.ytmusic.cipher.NoOpCipherService()
+        )
+
+        val providerWithResolver = YouTubeMusicProvider(
+            session = provider.session,
+            streamResolver = resolver
+        )
+
+        // 1. Resolver attempt returns 403 (fails)
+        mockServer.enqueue(MockResponse().setResponseCode(403).setBody("Forbidden"))
+        // 2. Legacy fallback attempt returns 200 (succeeds)
+        val fallbackJson = """
+        {
+            "playabilityStatus": { "status": "OK" },
+            "streamingData": {
+                "expiresInSeconds": "3600",
+                "adaptiveFormats": [
+                    {
+                        "itag": 251,
+                        "mimeType": "audio/webm; codecs=\"opus\"",
+                        "url": "https://fallback.googlevideo.com/audio.opus",
+                        "bitrate": 160000
+                    }
+                ]
+            }
+        }
+        """.trimIndent()
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody(fallbackJson))
+
+        val context = ResolutionContext(track = sampleTrack)
+        val result = providerWithResolver.resolvePlayback(context)
+
+        assertThat(result).isInstanceOf(ResolutionResult.Success::class.java)
+        val success = result as ResolutionResult.Success
+        val progressive = success.primarySource as PlaybackSource.Progressive
+        assertThat(progressive.url).isEqualTo("https://fallback.googlevideo.com/audio.opus")
+    }
+
+    @Test
+    @DisplayName("checkpointPlayback and handlePlaybackError correctly manage RecoveryManager state")
+    fun testCheckpointAndRecoveryHandling() {
+        val recoveryManager = com.aurora.engine.provider.ytmusic.recovery.RecoveryManager()
+        val providerWithRecovery = YouTubeMusicProvider(
+            session = provider.session,
+            recoveryManager = recoveryManager
+        )
+
+        providerWithRecovery.checkpointPlayback(
+            mediaId = "track_checkpoint_test",
+            positionMs = 45_000L,
+            byteOffset = 600_000L,
+            durationMs = 210_000L,
+            currentTransport = com.aurora.engine.provider.ytmusic.transport.TransportType.PROGRESSIVE,
+            currentClientName = "ANDROID_MUSIC"
+        )
+
+        val action = providerWithRecovery.handlePlaybackError(
+            mediaId = "track_checkpoint_test",
+            errorType = com.aurora.engine.provider.ytmusic.recovery.PlaybackErrorType.HTTP_403,
+            currentClientName = "ANDROID_MUSIC",
+            currentTransport = com.aurora.engine.provider.ytmusic.transport.TransportType.PROGRESSIVE,
+            availableClients = 3,
+            currentClientIndex = 0
+        )
+
+        assertThat(action.strategy).isEqualTo(com.aurora.engine.provider.ytmusic.recovery.RecoveryStrategy.REAUTH)
+        assertThat(action.resumePositionMs).isEqualTo(45_000L)
+        assertThat(action.resumeByteOffset).isEqualTo(600_000L)
+    }
+
+    @Test
+    @DisplayName("Metadata catalog request falls back to second client when first metadata client returns 403")
+    fun testMetadataFallbackOnFailure() = runBlocking {
+        val store = com.aurora.engine.provider.ytmusic.config.ClientConfigStore(
+            """[
+                {"clientName":"META_CLIENT_1","clientVersion":"1.0","userAgent":"UA1","supportsMetadata":true,"metadataPriority":100,"enabled":true},
+                {"clientName":"META_CLIENT_2","clientVersion":"2.0","userAgent":"UA2","supportsMetadata":true,"metadataPriority":80,"enabled":true}
+            ]"""
+        )
+        val metadataLadder = com.aurora.engine.provider.ytmusic.config.ClientLadder.forMetadata(store)
+        val resolver = com.aurora.engine.provider.ytmusic.resolver.MultiClientStreamResolver(
+            session = provider.session,
+            clientLadder = metadataLadder,
+            urlCache = com.aurora.engine.provider.ytmusic.resolver.StreamUrlCache(),
+            cipherService = com.aurora.engine.provider.ytmusic.cipher.NoOpCipherService(),
+            metadataLadder = metadataLadder
+        )
+
+        val providerWithResolver = YouTubeMusicProvider(
+            session = provider.session,
+            streamResolver = resolver
+        )
+
+        // First client returns 403
+        mockServer.enqueue(MockResponse().setResponseCode(403).setBody("Forbidden"))
+
+        // Second client returns valid response
+        val nextJson = """
+        {
+            "contents": {
+                "singleColumnMusicWatchNextResultsRenderer": {
+                    "tabbedRenderer": {
+                        "watchNextTabbedResultsRenderer": {
+                            "tabs": [
+                                {
+                                    "tabRenderer": {
+                                        "content": {
+                                            "musicQueueRenderer": {
+                                                "content": {
+                                                    "playlistPanelRenderer": {
+                                                        "contents": [
+                                                            {
+                                                                "playlistPanelVideoRenderer": {
+                                                                    "videoId": "radio_1",
+                                                                    "title": { "runs": [{ "text": "Radio Song" }] },
+                                                                    "shortBylineText": { "runs": [{ "text": "Artist" }] },
+                                                                    "lengthText": { "runs": [{ "text": "3:00" }] }
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+        """.trimIndent()
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody(nextJson))
+
+        val radioTracks = providerWithResolver.getNextRadioTracks("start_track")
+        assertThat(radioTracks).hasSize(1)
+        assertThat(radioTracks.first().id).isEqualTo("radio_1")
+
+        // First metadata client penalized, second client rewarded
+        assertThat(metadataLadder.getHealthSnapshot()["META_CLIENT_1"]).isEqualTo(1)
+        assertThat(metadataLadder.getHealthSnapshot()["META_CLIENT_2"]).isEqualTo(0)
+    }
 }

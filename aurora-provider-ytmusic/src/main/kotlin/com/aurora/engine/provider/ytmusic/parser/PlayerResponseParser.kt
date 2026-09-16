@@ -35,7 +35,10 @@ data class ParsedPlayerResponse(
     val formats: List<ParsedStreamFormat>,
     val serverEndpoint: String? = null,
     val ustreamerConfig: String? = null,
-    val rawPlayability: Map<String, String> = emptyMap()
+    val rawPlayability: Map<String, String> = emptyMap(),
+    val videoTitle: String? = null,
+    val videoAuthor: String? = null,
+    val videoDurationMs: Long? = null
 )
 
 object PlayerResponseParser {
@@ -122,6 +125,12 @@ object PlayerResponseParser {
             }
         }
 
+        val videoDetails = root["videoDetails"]?.jsonObject
+        val videoTitle = videoDetails?.get("title")?.jsonPrimitive?.content
+        val videoAuthor = videoDetails?.get("author")?.jsonPrimitive?.content
+        val videoLengthSeconds = videoDetails?.get("lengthSeconds")?.jsonPrimitive?.content?.toLongOrNull()
+        val videoDurationMs = videoLengthSeconds?.times(1000L)
+
         return ParsedPlayerResponse(
             isPlayable = true,
             status = status,
@@ -130,7 +139,10 @@ object PlayerResponseParser {
             formats = parsedFormats,
             serverEndpoint = serverEndpoint,
             ustreamerConfig = ustreamerConfig,
-            rawPlayability = rawPlayability
+            rawPlayability = rawPlayability,
+            videoTitle = videoTitle,
+            videoAuthor = videoAuthor,
+            videoDurationMs = videoDurationMs
         )
     }
 

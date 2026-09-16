@@ -9,6 +9,12 @@ java {
     }
 }
 
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions {
+        freeCompilerArgs.add("-Xskip-metadata-version-check")
+    }
+}
+
 dependencies {
     implementation(project(":aurora-core"))
     implementation(libs.kotlin.stdlib)
@@ -16,6 +22,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.datetime)
     implementation(libs.okhttp)
+    implementation(libs.quickjs.kt)
 
     // Unit Testing & MockWebServer
     testImplementation(libs.junit)

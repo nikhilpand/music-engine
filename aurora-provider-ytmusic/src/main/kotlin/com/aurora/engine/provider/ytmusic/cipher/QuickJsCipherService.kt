@@ -214,20 +214,38 @@ open class QuickJsCipherService(
      * For now, this method provides the integration point.
      */
     internal open suspend fun evaluateJs(script: String): String {
-        // Production implementation using quickjs-kt:
-        // val runtime = QuickJs.create()
-        // try {
-        //     val result = runtime.evaluate(script)
-        //     return result?.toString()
-        //         ?: throw CipherException("QuickJS returned null", CipherPhase.VALIDATION)
-        // } finally {
-        //     runtime.close()
-        // }
+        val runtime = try {
+            com.dokar.quickjs.QuickJs.create(kotlinx.coroutines.Dispatchers.Default)
+        } catch (e: UnsatisfiedLinkError) {
+            throw CipherException(
+                "Failed to load native QuickJS library: ${e.message}",
+                CipherPhase.EVALUATION,
+                e
+            )
+        } catch (e: Exception) {
+            throw CipherException(
+                "Failed to initialize QuickJS runtime: ${e.message}",
+                CipherPhase.EVALUATION,
+                e
+            )
+        }
 
-        // Stub that will be replaced when quickjs-kt dependency is integrated
-        throw CipherException(
-            "QuickJS runtime not yet integrated. Call site: evaluateJs",
-            CipherPhase.EVALUATION
-        )
+        return try {
+            val result = runtime.evaluate<Any?>(script)
+            result?.toString() ?: throw CipherException(
+                "QuickJS evaluation returned null",
+                CipherPhase.VALIDATION
+            )
+        } catch (e: CipherException) {
+            throw e
+        } catch (e: Exception) {
+            throw CipherException(
+                "QuickJS evaluation error: ${e.message}",
+                CipherPhase.EVALUATION,
+                e
+            )
+        } finally {
+            runtime.close()
+        }
     }
 }

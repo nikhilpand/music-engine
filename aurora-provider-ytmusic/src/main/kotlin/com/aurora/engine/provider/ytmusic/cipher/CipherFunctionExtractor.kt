@@ -85,7 +85,7 @@ class CipherFunctionExtractor {
                     append(helperObj)
                     append("\n")
                 }
-                append("var $funcName=$funcBody")
+                append("var $funcName=$funcBody;")
             }
 
             return ExtractedFunction(
@@ -163,7 +163,7 @@ class CipherFunctionExtractor {
 
             return ExtractedFunction(
                 name = funcName,
-                source = "var $funcName=$funcBody",
+                source = "var $funcName=$funcBody;",
                 strategy = ExtractionStrategy.AST
             )
         }
@@ -220,7 +220,7 @@ class CipherFunctionExtractor {
                             // Extract from "function(" to closing "}"
                             val bodyStartIdx = startMatch.value.indexOf("function")
                             return startMatch.value.substring(bodyStartIdx) +
-                                    js.substring(startMatch.range.last, i + 1)
+                                    js.substring(startMatch.range.last + 1, i + 1)
                         }
                     }
                 }

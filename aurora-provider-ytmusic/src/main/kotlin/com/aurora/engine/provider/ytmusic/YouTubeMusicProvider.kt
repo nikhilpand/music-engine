@@ -17,6 +17,10 @@ import com.aurora.engine.provider.ytmusic.parser.ParsedPlayerResponse
 import com.aurora.engine.provider.ytmusic.parser.ParsedStreamFormat
 import com.aurora.engine.provider.ytmusic.parser.PlayerResponseParser
 import com.aurora.engine.provider.ytmusic.parser.PlaylistDetails
+import com.aurora.engine.provider.ytmusic.config.toInnerTubeClientConfig
+import com.aurora.engine.provider.ytmusic.recovery.PlaybackErrorType
+import com.aurora.engine.provider.ytmusic.recovery.RecoveryManager
+import com.aurora.engine.provider.ytmusic.resolver.MultiClientStreamResolver
 import com.aurora.engine.provider.ytmusic.session.InnerTubeClientConfig
 import com.aurora.engine.provider.ytmusic.session.InnerTubeException
 import com.aurora.engine.provider.ytmusic.session.InnerTubeSession
@@ -35,6 +39,8 @@ class YouTubeMusicProvider(
     val strategyRegistry: StrategyRegistry = StrategyRegistry(),
     val transformProvider: PlayerTransformProvider = PassThroughPlayerTransformProvider(),
     val tokenProvider: PlaybackTokenProvider = DefaultPlaybackTokenProvider(),
+    val streamResolver: MultiClientStreamResolver? = null,
+    val recoveryManager: RecoveryManager = RecoveryManager(),
     private val clock: () -> Long = { System.currentTimeMillis() }
 ) : MusicProvider {
 
@@ -53,15 +59,70 @@ class YouTubeMusicProvider(
     // PlaybackProvider Implementation
     // ==========================================
 
-    override suspend fun resolvePlayback(context: ResolutionContext): ResolutionResult {
-        val eligibleStrategies = strategyRegistry.getEligibleStrategies(context)
+    override suspend fun resolvePlayback(
+        context: ResolutionContext
+    ): ResolutionResult {
+
+        /*
+         * Phase 5 primary path:
+         *
+         * MultiClientStreamResolver
+         *      ↓
+         * ClientLadder
+         *      ↓
+         * cache / client fallback / cipher / transport
+         *
+         * The old StrategyRegistry path remains as a compatibility fallback.
+         */
+        streamResolver?.let { resolver ->
+
+            val startTime = clock()
+
+            try {
+                val result = resolver.resolve(
+                    track = context.track,
+                    context = context,
+                    preferSabr = false
+                )
+
+                when (result) {
+                    is ResolutionResult.Success -> {
+                        recoveryManager.onRecoverySuccess(context.track.id)
+
+                        return result.copy(
+                            latencyMs = clock() - startTime
+                        )
+                    }
+
+                    is ResolutionResult.Failure -> {
+                        /*
+                         * Do not immediately return.
+                         * The old strategy resolver remains available as a
+                         * backward-compatible fallback.
+                         */
+                    }
+                }
+            } catch (_: Throwable) {
+                /*
+                 * Resolver failure must not destroy the existing playback path.
+                 * Fall through to StrategyRegistry.
+                 */
+            }
+        }
+
+        // ============================================================
+        // LEGACY / COMPATIBILITY FALLBACK
+        // ============================================================
+
+        val eligibleStrategies = strategyRegistry
+            .getEligibleStrategies(context)
             .filterIsInstance<YouTubePlaybackStrategy>()
 
         if (eligibleStrategies.isEmpty()) {
             return ResolutionResult.Failure(
                 error = PlaybackError(
                     code = "NO_ELIGIBLE_STRATEGIES",
-                    message = "No eligible or healthy playback strategies available for track ${context.track.id}",
+                    message = "No eligible playback strategies available for track ${context.track.id}",
                     category = ErrorCategory.PROVIDER_REJECTION,
                     isRecoverable = false
                 ),
@@ -73,50 +134,95 @@ class YouTubeMusicProvider(
         var lastError: PlaybackError? = null
         var failedStrategyId: String? = null
 
-        // Try eligible strategies in priority/health-ranked order
         for (strategy in eligibleStrategies) {
-            val startTime = clock()
-            try {
-                val candidateResult = resolveWithStrategy(context.track, context, strategy)
-                if (candidateResult is ResolutionResult.Success) {
-                    val latency = clock() - startTime
-                    strategyRegistry.reportSuccess(strategy.id, latency)
-                    return candidateResult.copy(latencyMs = latency)
-                } else if (candidateResult is ResolutionResult.Failure) {
-                    val latency = clock() - startTime
-                    lastError = candidateResult.error
-                    failedStrategyId = strategy.id
-                    val failureType = classifyFailure(candidateResult.error)
-                    strategyRegistry.reportFailure(strategy.id, failureType, latency)
 
-                    if (!candidateResult.canFallback) {
-                        return candidateResult.copy(latencyMs = latency)
+            val startTime = clock()
+
+            try {
+                val candidateResult = resolveWithStrategy(
+                    track = context.track,
+                    context = context,
+                    strategy = strategy
+                )
+
+                when (candidateResult) {
+
+                    is ResolutionResult.Success -> {
+                        val latency = clock() - startTime
+
+                        strategyRegistry.reportSuccess(
+                            strategy.id,
+                            latency
+                        )
+
+                        return candidateResult.copy(
+                            latencyMs = latency
+                        )
+                    }
+
+                    is ResolutionResult.Failure -> {
+
+                        val latency = clock() - startTime
+
+                        lastError = candidateResult.error
+                        failedStrategyId = strategy.id
+
+                        val failureType =
+                            classifyFailure(candidateResult.error)
+
+                        strategyRegistry.reportFailure(
+                            strategy.id,
+                            failureType,
+                            latency
+                        )
+
+                        if (!candidateResult.canFallback) {
+                            return candidateResult.copy(
+                                latencyMs = latency
+                            )
+                        }
                     }
                 }
+
             } catch (ite: InnerTubeException) {
+
                 val latency = clock() - startTime
+
                 lastError = ite.playbackError
                 failedStrategyId = strategy.id
-                val failureType = classifyFailure(ite.playbackError)
-                strategyRegistry.reportFailure(strategy.id, failureType, latency)
+
+                strategyRegistry.reportFailure(
+                    strategy.id,
+                    classifyFailure(ite.playbackError),
+                    latency
+                )
+
             } catch (t: Throwable) {
+
                 val latency = clock() - startTime
+
                 val error = PlaybackError(
                     code = "UNEXPECTED_RESOLVER_ERROR",
                     message = t.message ?: "Unknown exception during resolution",
                     category = ErrorCategory.INVALID_RESPONSE,
                     isRecoverable = true
                 )
+
                 lastError = error
                 failedStrategyId = strategy.id
-                strategyRegistry.reportFailure(strategy.id, FailureType.INVALID_RESPONSE, latency)
+
+                strategyRegistry.reportFailure(
+                    strategy.id,
+                    FailureType.INVALID_RESPONSE,
+                    latency
+                )
             }
         }
 
         return ResolutionResult.Failure(
             error = lastError ?: PlaybackError(
-                code = "ALL_STRATEGIES_EXHAUSTED",
-                message = "All eligible playback strategies failed to resolve track ${context.track.id}",
+                code = "ALL_RESOLUTION_PATHS_EXHAUSTED",
+                message = "All playback resolution paths failed for track ${context.track.id}",
                 category = ErrorCategory.PROVIDER_REJECTION,
                 isRecoverable = false
             ),
@@ -526,29 +632,85 @@ class YouTubeMusicProvider(
     }
 
     // ==========================================
-    // CatalogProvider Implementation
+    // Playback Recovery Integration
     // ==========================================
 
-    override suspend fun search(query: String, filter: String?, pageToken: String?): List<Track> {
-        val clientConfig = InnerTubeClientConfig.WEB_REMIX
-        val contextObj = session.buildContextPayload(clientConfig)
+    fun checkpointPlayback(
+        mediaId: String,
+        positionMs: Long,
+        byteOffset: Long,
+        durationMs: Long,
+        currentTransport: com.aurora.engine.provider.ytmusic.transport.TransportType,
+        currentClientName: String
+    ) {
+        recoveryManager.checkpoint(
+            mediaId = mediaId,
+            positionMs = positionMs,
+            byteOffset = byteOffset,
+            durationMs = durationMs,
+            currentTransport = currentTransport,
+            currentClientName = currentClientName
+        )
+    }
 
-        val payload = buildJsonObject {
-            put("context", contextObj)
-            put("query", query)
-            if (filter != null) {
-                put("params", filter)
+    fun handlePlaybackError(
+        mediaId: String,
+        errorType: PlaybackErrorType,
+        currentClientName: String,
+        currentTransport: com.aurora.engine.provider.ytmusic.transport.TransportType,
+        availableClients: Int,
+        currentClientIndex: Int
+    ) = recoveryManager.onError(
+        mediaId = mediaId,
+        errorType = errorType,
+        currentClientName = currentClientName,
+        currentTransport = currentTransport,
+        availableClients = availableClients,
+        currentClientIndex = currentClientIndex
+    )
+
+    // ==========================================
+    // CatalogProvider Implementation (Fallback-Capable)
+    // ==========================================
+
+    private suspend fun executeMetadataRequest(
+        endpoint: String,
+        buildPayload: (InnerTubeClientConfig) -> kotlinx.serialization.json.JsonObject
+    ): com.aurora.engine.provider.ytmusic.session.InnerTubeResponse? {
+        val ladder = streamResolver?.metadataLadder
+        if (ladder != null) {
+            val candidates = ladder.availableClients()
+            for (client in candidates) {
+                val config = client.toInnerTubeClientConfig()
+                val payload = buildPayload(config)
+                val result = session.postJson(endpoint, payload, config)
+                val response = result.getOrNull()
+                if (response != null && response.isSuccess) {
+                    ladder.recordSuccess(client.clientName)
+                    return response
+                } else {
+                    ladder.recordFailure(client.clientName)
+                }
             }
         }
 
-        val result = session.postJson(
-            endpoint = "/youtubei/v1/search",
-            payload = payload,
-            clientConfig = clientConfig
-        )
+        // Default fallback to WEB_REMIX if ladder is not provided or exhausted
+        val fallbackConfig = InnerTubeClientConfig.WEB_REMIX
+        val payload = buildPayload(fallbackConfig)
+        return session.postJson(endpoint, payload, fallbackConfig).getOrNull()?.takeIf { it.isSuccess }
+    }
 
-        val response = result.getOrNull() ?: return emptyList()
-        if (!response.isSuccess) return emptyList()
+    override suspend fun search(query: String, filter: String?, pageToken: String?): List<Track> {
+        val response = executeMetadataRequest("/youtubei/v1/search") { clientConfig ->
+            val contextObj = session.buildContextPayload(clientConfig)
+            buildJsonObject {
+                put("context", contextObj)
+                put("query", query)
+                if (filter != null) {
+                    put("params", filter)
+                }
+            }
+        } ?: return emptyList()
 
         return CatalogResponseParser.parseSearchTracks(response.body)
     }
@@ -559,88 +721,51 @@ class YouTubeMusicProvider(
     }
 
     override suspend fun getNextRadioTracks(trackId: String): List<Track> {
-        val clientConfig = InnerTubeClientConfig.WEB_REMIX
-        val contextObj = session.buildContextPayload(clientConfig)
-
-        val payload = buildJsonObject {
-            put("context", contextObj)
-            put("videoId", trackId)
-            put("isAudioOnly", true)
-        }
-
-        val result = session.postJson(
-            endpoint = "/youtubei/v1/next",
-            payload = payload,
-            clientConfig = clientConfig
-        )
-
-        val response = result.getOrNull() ?: return emptyList()
-        if (!response.isSuccess) return emptyList()
+        val response = executeMetadataRequest("/youtubei/v1/next") { clientConfig ->
+            val contextObj = session.buildContextPayload(clientConfig)
+            buildJsonObject {
+                put("context", contextObj)
+                put("videoId", trackId)
+                put("isAudioOnly", true)
+            }
+        } ?: return emptyList()
 
         return CatalogResponseParser.parseWatchNextQueue(response.body)
     }
 
     suspend fun getArtistDetails(artistId: String): ArtistDetails? {
-        val clientConfig = InnerTubeClientConfig.WEB_REMIX
-        val contextObj = session.buildContextPayload(clientConfig)
-
-        val payload = buildJsonObject {
-            put("context", contextObj)
-            put("browseId", artistId)
-        }
-
-        val result = session.postJson(
-            endpoint = "/youtubei/v1/browse",
-            payload = payload,
-            clientConfig = clientConfig
-        )
-
-        val response = result.getOrNull() ?: return null
-        if (!response.isSuccess) return null
+        val response = executeMetadataRequest("/youtubei/v1/browse") { clientConfig ->
+            val contextObj = session.buildContextPayload(clientConfig)
+            buildJsonObject {
+                put("context", contextObj)
+                put("browseId", artistId)
+            }
+        } ?: return null
 
         return CatalogResponseParser.parseBrowseArtist(response.body, artistId)
     }
 
     suspend fun getAlbumDetails(albumId: String): AlbumDetails? {
-        val clientConfig = InnerTubeClientConfig.WEB_REMIX
-        val contextObj = session.buildContextPayload(clientConfig)
-
-        val payload = buildJsonObject {
-            put("context", contextObj)
-            put("browseId", albumId)
-        }
-
-        val result = session.postJson(
-            endpoint = "/youtubei/v1/browse",
-            payload = payload,
-            clientConfig = clientConfig
-        )
-
-        val response = result.getOrNull() ?: return null
-        if (!response.isSuccess) return null
+        val response = executeMetadataRequest("/youtubei/v1/browse") { clientConfig ->
+            val contextObj = session.buildContextPayload(clientConfig)
+            buildJsonObject {
+                put("context", contextObj)
+                put("browseId", albumId)
+            }
+        } ?: return null
 
         return CatalogResponseParser.parseBrowseAlbum(response.body, albumId)
     }
 
     suspend fun getPlaylistDetails(playlistId: String): PlaylistDetails? {
-        val clientConfig = InnerTubeClientConfig.WEB_REMIX
-        val contextObj = session.buildContextPayload(clientConfig)
-
         val browseId = if (playlistId.startsWith("VL")) playlistId else "VL$playlistId"
-
-        val payload = buildJsonObject {
-            put("context", contextObj)
-            put("browseId", browseId)
-        }
-
-        val result = session.postJson(
-            endpoint = "/youtubei/v1/browse",
-            payload = payload,
-            clientConfig = clientConfig
-        )
-
-        val response = result.getOrNull() ?: return null
-        if (!response.isSuccess) return null
+        val response = executeMetadataRequest("/youtubei/v1/browse") { clientConfig ->
+            val contextObj = session.buildContextPayload(clientConfig)
+            buildJsonObject {
+                put("context", contextObj)
+                put("browseId", browseId)
+            }
+        } ?: return null
 
         return CatalogResponseParser.parseBrowsePlaylist(response.body, playlistId)
     }

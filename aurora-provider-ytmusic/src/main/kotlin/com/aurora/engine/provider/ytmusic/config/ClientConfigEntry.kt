@@ -47,3 +47,19 @@ data class ClientConfigEntry(
         require(clientVersion.isNotBlank()) { "clientVersion cannot be blank" }
     }
 }
+
+fun ClientConfigEntry.toInnerTubeClientConfig(): com.aurora.engine.provider.ytmusic.session.InnerTubeClientConfig =
+    com.aurora.engine.provider.ytmusic.session.InnerTubeClientConfig(
+        clientName = clientName,
+        clientVersion = clientVersion,
+        clientScreen = clientScreen,
+        userAgent = userAgent,
+        osName = osName.ifBlank { "Android" },
+        osVersion = osVersion.ifBlank { "14" },
+        platform = platform.ifBlank { "MOBILE" },
+        hl = hl,
+        gl = gl,
+        requiresCipher = requiresCipher,
+        requiresPoToken = requiresPoToken,
+        supportsSabr = supportsSabr
+    )
