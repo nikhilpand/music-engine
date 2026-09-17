@@ -320,10 +320,10 @@ class YouTubeMusicProvider(
                 }
                 parsed.status.equals("CONTENT_CHECK_REQUIRED", ignoreCase = true) ||
                 parsed.status.equals("AGE_CHECK_REQUIRED", ignoreCase = true) -> {
-                    Triple(ErrorCategory.CONTENT_RESTRICTION, false, false)
+                    Triple(ErrorCategory.CONTENT_RESTRICTION, false, true)
                 }
                 parsed.status.equals("UNPLAYABLE", ignoreCase = true) -> {
-                    Triple(ErrorCategory.UNPLAYABLE, false, false)
+                    Triple(ErrorCategory.UNPLAYABLE, false, true)
                 }
                 parsed.status.contains("BOT", ignoreCase = true) ||
                 parsed.status.contains("CAPTCHA", ignoreCase = true) -> {

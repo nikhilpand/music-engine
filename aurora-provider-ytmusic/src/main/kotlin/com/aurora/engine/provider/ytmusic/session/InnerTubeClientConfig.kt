@@ -16,9 +16,23 @@ data class InnerTubeClientConfig(
     val utcOffsetMinutes: Int = 0,
     val requiresCipher: Boolean = false,
     val requiresPoToken: Boolean = false,
-    val supportsSabr: Boolean = false
+    val supportsSabr: Boolean = false,
+    val baseUrl: String? = null
 ) {
     companion object {
+        val ANDROID_VR = InnerTubeClientConfig(
+            clientName = "ANDROID_VR",
+            clientVersion = "1.61.48",
+            userAgent = "Mozilla/5.0 (Linux; Android 12; Quest 3 Build/SQ3A.220605.009.A1) AppleWebKit/537.36 (KHTML, like Gecko) OculusBrowser/33.0.0.18.61.579483329 SamsungBrowser/4.0 Chrome/122.0.6261.139 Mobile VR Safari/537.36",
+            osName = "Android",
+            osVersion = "12",
+            platform = "MOBILE",
+            requiresCipher = false,
+            requiresPoToken = false,
+            supportsSabr = false,
+            baseUrl = "https://www.youtube.com"
+        )
+
         val ANDROID_MUSIC = InnerTubeClientConfig(
             clientName = "ANDROID_MUSIC",
             clientVersion = "6.42.52",

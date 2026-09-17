@@ -40,7 +40,8 @@ data class ClientConfigEntry(
     val supportsMetadata: Boolean = false,
     val metadataPriority: Int = 0,
     val enabled: Boolean = true,
-    val priority: Int = 0
+    val priority: Int = 0,
+    val baseUrl: String? = null
 ) {
     init {
         require(clientName.isNotBlank()) { "clientName cannot be blank" }
@@ -61,5 +62,6 @@ fun ClientConfigEntry.toInnerTubeClientConfig(): com.aurora.engine.provider.ytmu
         gl = gl,
         requiresCipher = requiresCipher,
         requiresPoToken = requiresPoToken,
-        supportsSabr = supportsSabr
+        supportsSabr = supportsSabr,
+        baseUrl = baseUrl
     )

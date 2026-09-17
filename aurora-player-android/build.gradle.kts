@@ -30,6 +30,15 @@ android {
     }
 }
 
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains.kotlin:kotlin-stdlib:2.1.0")
+        force("org.jetbrains.kotlin:kotlin-stdlib-common:2.1.0")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.1.0")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.1.0")
+    }
+}
+
 dependencies {
     implementation(project(":aurora-core"))
     implementation(project(":aurora-transport-progressive"))
@@ -52,6 +61,16 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // Connected Android Device Testing
+    androidTestImplementation(project(":aurora-core"))
+    androidTestImplementation(project(":aurora-provider-ytmusic"))
+    androidTestImplementation(project(":aurora-transport-progressive"))
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.truth)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
 }
 
 tasks.withType<Test> {

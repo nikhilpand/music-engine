@@ -148,6 +148,21 @@ class ClientConfigStore(
          */
         fun hardcodedDefaults(): List<ClientConfigEntry> = listOf(
             ClientConfigEntry(
+                clientName = "ANDROID_VR",
+                clientVersion = "1.61.48",
+                userAgent = "Mozilla/5.0 (Linux; Android 12; Quest 3 Build/SQ3A.220605.009.A1) AppleWebKit/537.36 (KHTML, like Gecko) OculusBrowser/33.0.0.18.61.579483329 SamsungBrowser/4.0 Chrome/122.0.6261.139 Mobile VR Safari/537.36",
+                osName = "Android",
+                osVersion = "12",
+                platform = "MOBILE",
+                requiresCipher = false,
+                requiresPoToken = false,
+                supportsSabr = false,
+                supportsMetadata = false,
+                priority = 95,
+                metadataPriority = 0,
+                baseUrl = "https://www.youtube.com"
+            ),
+            ClientConfigEntry(
                 clientName = "VISIONOS",
                 clientVersion = "0.1",
                 userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
@@ -159,7 +174,8 @@ class ClientConfigStore(
                 supportsSabr = false,
                 supportsMetadata = false,
                 priority = 85,
-                metadataPriority = 0
+                metadataPriority = 0,
+                baseUrl = "https://www.youtube.com"
             ),
             ClientConfigEntry(
                 clientName = "TVHTML5",
@@ -173,7 +189,8 @@ class ClientConfigStore(
                 supportsSabr = false,
                 supportsMetadata = false,
                 priority = 70,
-                metadataPriority = 0
+                metadataPriority = 0,
+                baseUrl = "https://www.youtube.com"
             )
         )
     }

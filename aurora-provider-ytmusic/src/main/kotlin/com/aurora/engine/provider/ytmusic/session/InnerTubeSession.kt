@@ -76,10 +76,11 @@ class InnerTubeSession(
         payload: JsonObject,
         clientConfig: InnerTubeClientConfig
     ): Result<InnerTubeResponse> = withContext(Dispatchers.IO) {
+        val effectiveBase = clientConfig.baseUrl ?: baseUrl
         val url = if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
             endpoint
         } else {
-            val normalizedBase = baseUrl.removeSuffix("/")
+            val normalizedBase = effectiveBase.removeSuffix("/")
             val normalizedEndpoint = endpoint.removePrefix("/")
             "$normalizedBase/$normalizedEndpoint"
         }
